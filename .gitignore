@@ -1,0 +1,20 @@
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+
+# Generated experiment data and local inputs
+/results/
+/logs/
+/tmp/
+/data/*
+!/data/dataset/
+/data/dataset/*
+!/data/dataset/simple_1000_concepts.json
+.env
+
+# Local Python environments and package builds
+.venv/
+build/
+dist/
+*.egg-info/

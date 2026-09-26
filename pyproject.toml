@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mechanistic-code"
+version = "0.1.0"
+description = "Model-agnostic LLM introspection and mechanistic interpretability experiments"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "torch==2.6.0",
+    "transformers>=5.4,<6",
+    "transformer-lens>=3.5,<3.6",
+    "accelerate",
+    "pandas>=2.2,<2.3",
+    "numpy",
+    "scipy",
+    "safetensors",
+    "scikit-learn",
+    "plotly",
+    "matplotlib",
+    "nltk>=3.9,<4",
+]
+
+[tool.setuptools.packages.find]
+include = ["introspection_core*"]
+
+[tool.setuptools.package-data]
+introspection_core = ["assets/*"]
+
+# Keep transitive data tooling installable on the cluster's glibc 2.17.
+[tool.uv]
+constraint-dependencies = ["datasets<4", "pyarrow>=15,<18", "sentencepiece<0.2.1", "wandb<0.20", "pillow<11"]
+
+# Match the existing CUDA 12.4 experiment environment on Linux/Windows.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true

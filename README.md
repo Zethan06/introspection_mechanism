@@ -1,82 +1,150 @@
-# Gate and router heads for introspective detection and localization
+# A Mechanistic Study of Language Model Introspection
 
-Code for every experiment in the paper. A concept vector is optionally injected
-into the hidden state at one of ten candidate tokens; the model reports the
-affected position's label or `none`. The pipeline calibrates the injection,
-builds balanced token clusters, finds gate heads with a straight-through Top-k
-head mask, finds router heads with head-wise patching, crosses the two, and
-analyzes how gate heads read different concepts through their QK and OV
-circuits.
+Research code for studying how language models detect and localize injected
+concept representations. The experiments investigate the roles of attention
+heads in introspective reports through activation interventions, head selection,
+and query–key (QK) and output–value (OV) analyses.
 
-## Setup
+## Overview
+
+A concept vector is injected into the hidden state at one of ten candidate
+tokens. The model reports the affected position's label, or `none` when no
+injection is detected. The experimental pipeline:
+
+1. Calibrates injection layers and strengths and constructs balanced token clusters.
+2. Screens concepts and creates fixed training, validation, and test splits.
+3. Selects gate heads using straight-through Top-k masks and analyzes router
+   heads through activation patching.
+4. Evaluates causal interventions, label transfer, and lexical controls.
+5. Analyzes how the selected heads read concept injections through QK and OV circuits.
+
+## Repository Structure
+
+```text
+configs/              Model-specific experiment settings
+introspection_core/   Reusable model, intervention, scoring, and analysis code
+  assets/             Static visualization assets
+scripts/              Python experiment and analysis entry points
+run_sh/               Staged experiment workflows
+data/dataset/        Calibration concepts and generated model-specific datasets
+tests/               CPU-friendly unit tests
+```
+
+`results/`, `logs/`, and `tmp/` contain generated outputs and are excluded from
+version control. Model checkpoints and the local `.venv` are not included.
+
+## Installation
+
+The configured environment uses Python 3.10, PyTorch 2.6.0, and TransformerLens
+3.5.x. GPU experiments default to CUDA and `bfloat16`. Linux and Windows use
+the CUDA 12.4 PyTorch build; macOS resolves PyTorch from PyPI. The shell workflows
+require Bash and have been verified on Linux.
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run
+from the repository root:
 
 ```bash
-# Install uv first: https://docs.astral.sh/uv/getting-started/installation/
 uv sync --locked
-uv run --locked python -m unittest discover -s tests -p "test_*.py"   # CPU only
 uv run --locked python scripts/search_vocab_injection_words.py --help
 ```
 
-Dependencies are declared in `pyproject.toml` and resolved in `uv.lock`;
-`.python-version` selects Python 3.10. Commit all three files together when
-changing the environment. `uv sync --locked` creates the local `.venv` and
-installs this package in editable mode, including visualization assets.
-Linux and Windows use PyTorch 2.6.0 with CUDA 12.4 from the explicit PyTorch
-index, matching the existing experiment environment; macOS uses PyPI.
-Pandas and the transitive datasets/PyArrow/SentencePiece/W&B/Pillow dependencies are constrained to
-versions with wheels compatible with this cluster's glibc 2.17.
+`pyproject.toml` declares the dependencies, `uv.lock` fixes their resolved
+versions, and `.python-version` selects the interpreter. Synchronization creates
+an isolated `.venv` and installs `introspection_core` in editable mode, including
+its visualization assets. Compatibility constraints retain prebuilt dependencies
+for the experiment server's glibc 2.17.
 
-The stage scripts automatically use `.venv/bin/python`, so activation is not
-required. `UV_PROJECT_ENVIRONMENT` can select another environment directory,
-and an explicit `PYTHON_BIN` overrides interpreter selection. Run `uv sync`
-before launching jobs; the stage scripts do not install dependencies mid-run.
+The shell workflows use `.venv/bin/python` automatically; activation is optional.
+Set `UV_PROJECT_ENVIRONMENT` to use another environment directory, or
+`PYTHON_BIN` to select an existing interpreter explicitly. Synchronize the
+environment before launching jobs.
 
-```bash
-uv add PACKAGE                         # Add a runtime dependency and update the lock
-uv lock --upgrade-package PACKAGE      # Deliberately upgrade one dependency
-uv sync --locked                       # Apply the reviewed lock file
-uv lock --check                         # Verify metadata and lock file agree
-uv run --locked python -m compileall -q introspection_core scripts
-```
+## Model Configuration
 
-`requirements.txt` remains a compatibility entry point for `pip install -r
-requirements.txt`, with dependencies read from `pyproject.toml`. Pip does not
-apply uv's CUDA index selection or lock; use uv for reproducible experiments.
-To return to a pre-existing environment, set `PYTHON_BIN` to its interpreter.
-See the [uv locking documentation](https://docs.astral.sh/uv/concepts/projects/sync/)
-and [PyTorch integration](https://docs.astral.sh/uv/guides/integration/pytorch/).
+The repository includes configurations for:
 
-Models are loaded by Hugging Face ID (`Qwen/Qwen3-4B-Instruct-2507`,
-`meta-llama/Llama-3.1-8B-Instruct`, `google/gemma-3-12b-it`). To use local
-checkpoints, put the local path in `MODEL_ID` of the model's env file, or set
-`MODEL_ROOT` for `run_sh/04e_gate_label_transfer.sh`. GPU stages default to
-CUDA and bfloat16.
+| Model | Configuration |
+| --- | --- |
+| Qwen3-4B-Instruct-2507 | `configs/qwen3-4b-instruct-2507.env` |
+| Llama-3.1-8B-Instruct | `configs/llama3.1-8b-instruct.env` |
+| Gemma-3-12B-IT | `configs/gemma3-12b-it.env` |
 
-The only external input is `data/dataset/simple_1000_concepts.json` (the 1,000
-common words used for calibration). Everything else under `data/dataset/<model>/`
-(clusters, concept splits, the English-token vocabulary) and `results/<model>/`
-is generated by the stages below.
+Before running an experiment, review the model configuration:
 
-## Prompts
+- `MODEL_ID`: Hugging Face model ID or local checkpoint path.
+- `GPU_IDS`, `STE_GPU`, and `VISUALIZATION_GPU`: available GPU assignments.
+- `BATCH_SIZE` and `EXTRACTION_BATCH_SIZE`: batch sizes for the available memory.
+- `DATASET_ROOT`, `RESULTS_ROOT`, `LOGS_ROOT`, and `TMP_ROOT`: storage locations.
+- `STE_LAYERS`, `ROUTER_LAYER`, and `ROUTER_HEADS`: model-specific gate search
+  window and router heads.
 
-`introspection_core/prompts.py` registers two prompts:
+Use `configs/model.env.example` as a template for another model. Stage 00 writes
+the selected injection setting to `results/<model>/calibration/selection.json`.
+Nonempty `INJECTION_LAYER` and `INJECTION_STRENGTH` values in a configuration
+act as consistency checks against that selection; leave them blank to use the
+newly calibrated values.
 
-- `semantic_highinj_posref_gate_balanced_disrupts`: the evaluation prompt
-  (ten `TOKEN i: <candidate>` entries, answers `0`-`9` or `none`). Its
-  `_letters_a_j` and `_numwords_one_ten` variants keep the wording and change
-  only the printed labels; shuffled-label arms draw one derangement per cluster.
+## Data and Experimental Protocol
+
+The bundled calibration vocabulary is
+`data/dataset/simple_1000_concepts.json`. The pipeline generates cluster banks,
+concept splits, and the English-token vocabulary under `data/dataset/<model>/`.
+Model weights are loaded separately through `MODEL_ID`.
+
+Stage 00 constructs four disjoint banks of 30 clusters for calibration, training,
+validation, and testing. Coarse screening produces a shortlist of 3,000 concepts;
+fine screening evaluates that shortlist on all 30 calibration clusters and
+selects the top 300, split into groups of 100 for training, validation, and testing.
+
+Stage 10 compares two fixed populations:
+
+- **C_intro:** the 100 validation concepts.
+- **C_nonintro:** a seeded random sample of 100 from the lowest-ranked 300
+  concepts within the 3,000-concept shortlist, using fine-screening accuracy.
+
+The nonintro sampler validates shortlist membership and population separation.
+Neither population is re-ranked using test outcomes.
+
+### Prompts
+
+`introspection_core/prompts.py` defines the prompt families:
+
+- `semantic_highinj_posref_gate_balanced_disrupts`: the evaluation prompt, with
+  ten `TOKEN i: <candidate>` entries and answers `0`–`9` or `none`. The
+  `_letters_a_j` and `_numwords_one_ten` variants change the displayed labels;
+  shuffled-label conditions use a fixed derangement for each cluster.
 - `token_localization`: the clean position-prior prompt, prefilled with
-  `It is located in TOKEN `, used to screen tokens and clusters.
+  `It is located in TOKEN `, used during token and cluster screening.
 
-## Running
+## Running Experiments
 
-Each per-model stage takes an env file from `configs/`:
+Run commands from the repository root. Most per-model workflows accept a
+configuration file, for example:
 
 ```bash
 bash run_sh/00_cluster_calibration_top300.sh configs/qwen3-4b-instruct-2507.env
 ```
 
-Run the stages in this order for each model, then Stage 11 once.
+The following entry points use different arguments:
+
+```bash
+# Stage 04e: one worker on GPU 0; model selection is controlled by MODELS.
+bash run_sh/04e_gate_label_transfer.sh 0
+
+# Stage 11: aggregate figures and tables after the required model runs finish.
+bash run_sh/11_paper_figures_and_tables.sh
+```
+
+For Stage 04e, `MODEL_ROOT` can point to a directory containing local checkpoints;
+otherwise, the workflow loads models from Hugging Face. GPU runs require access
+to the selected checkpoints and sufficient device memory.
+
+### Experiment Stages
+
+The table follows the reproduction workflow for the supplied model configurations.
+Downstream stages consume earlier outputs; the two Stage 08 sweep scripts are
+alternative execution modes. Run Stage 11 after the required per-model results
+are available.
 
 | Stage | What it produces |
 |---|---|
@@ -97,11 +165,13 @@ Run the stages in this order for each model, then Stage 11 once.
 | `10_concept_readout` | Section 4: C_nonintro sample, QK key-change SVD, query/key term ablation and KL, SVD of M = W_O dV^T, OV causal ablations |
 | `11_paper_figures_and_tables` | Figures 2 and 3, Top-k figure, Table 1, Table 2 and redirection-table intervals (all models) |
 
-`ROUTER_LAYER`/`ROUTER_HEADS` and `STE_LAYERS` in each env file are the router
-heads and the gate-head search window reported in the paper. During gate-on
-training the router heads' attention is forced to the target successor token.
+During gate-on training, the router heads' attention is forced to the target
+successor token. The supplied configurations specify the router heads and gate
+search windows used in the paper.
 
-## Where each result comes from
+## Results and Paper Artifacts
+
+Paths below use the default `RESULTS_ROOT=results`.
 
 | Paper item | Output |
 |---|---|
@@ -123,4 +193,29 @@ training the router heads' attention is forced to the target successor token.
 | OV causal ablations | `concept_readout/ov/causal_terms/`, `causal_top5/`, `causal_ksweep/` |
 
 `concept_readout/` lives under `results/<model>/`.
-# introspection_mechanism
+
+## Development and Validation
+
+Run the CPU-friendly unit suite and syntax checks without loading a checkpoint:
+
+```bash
+uv run --locked python -m unittest discover -s tests -p "test_*.py"
+uv run --locked python -m compileall -q introspection_core scripts
+uv lock --check
+```
+
+Manage dependencies through uv:
+
+```bash
+uv add PACKAGE                     # Add a dependency and update the lock file
+uv lock --upgrade-package PACKAGE  # Update one dependency within its constraints
+uv sync --locked                   # Install the locked environment
+```
+
+Commit `pyproject.toml` and `uv.lock` together when dependencies change. Update
+`.python-version` when intentionally changing the project interpreter.
+`requirements.txt` is a compatibility entry point for pip and reads dependencies
+from `pyproject.toml`; it does not apply uv's lock file or CUDA index selection.
+
+For details, see the [uv environment documentation](https://docs.astral.sh/uv/concepts/projects/sync/)
+and [PyTorch integration guide](https://docs.astral.sh/uv/guides/integration/pytorch/).
