@@ -1,5 +1,7 @@
 # A Mechanistic Study of Language Model Introspection
 
+This repository contains the code for the paper [**A mechanistic study of language model introspection**](https://arxiv.org/abs/2609.35108).
+
 Research code for studying how language models detect and localize injected
 concept representations. The experiments investigate the roles of attention
 heads in introspective reports through activation interventions, head selection,
@@ -141,3 +143,16 @@ from `pyproject.toml`; it does not apply uv's lock file or CUDA index selection.
 
 For details, see the [uv environment documentation](https://docs.astral.sh/uv/concepts/projects/sync/)
 and [PyTorch integration guide](https://docs.astral.sh/uv/guides/integration/pytorch/).
+
+## Citation
+
+If you find this work useful, please cite our paper:
+
+```bibtex
+@article{zou2026mechanistic,
+  title={A mechanistic study of language model introspection},
+  author={Zou, Jiahong and Sun, Xiangkun and Kong, Lingkai and Wang, Tonghan},
+  journal={arXiv preprint arXiv:2609.35108},
+  year={2026}
+}
+```
